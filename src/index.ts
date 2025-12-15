@@ -1,0 +1,679 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { InferenceClient } from '@huggingface/inference'
+import { z } from 'zod'
+
+// Hugging Face Inference Client
+const hfClient = new InferenceClient(process.env.HF_TOKEN)
+
+// Server configuration
+const SERVER_NAME = 'YOUR_SERVER_NAME'
+const SERVER_VERSION = '1.0.0'
+
+// Create server instance
+const server = new McpServer({
+    name: SERVER_NAME,
+    version: SERVER_VERSION
+})
+
+server.registerTool(
+    'greet',
+    {
+        description: '이름과 언어를 입력하면 인사말을 반환합니다.',
+        inputSchema: z.object({
+            name: z.string().describe('인사할 사람의 이름'),
+            language: z
+                .enum(['ko', 'en'])
+                .optional()
+                .default('en')
+                .describe('인사 언어 (기본값: en)')
+        }),
+        outputSchema: z.object({
+            content: z
+                .array(
+                    z.object({
+                        type: z.literal('text'),
+                        text: z.string().describe('인사말')
+                    })
+                )
+                .describe('인사말')
+        })
+    },
+    async ({ name, language }) => {
+        const greeting =
+            language === 'ko'
+                ? `안녕하세요, ${name}님!`
+                : `Hey there, ${name}! 👋 Nice to meet you!`
+
+        return {
+            content: [
+                {
+                    type: 'text' as const,
+                    text: greeting
+                }
+            ],
+            structuredContent: {
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: greeting
+                    }
+                ]
+            }
+        }
+    }
+)
+
+server.registerTool(
+    'calculator',
+    {
+        description: '두 개의 숫자와 연산자를 입력받아 사칙연산 결과를 반환합니다.',
+        inputSchema: z.object({
+            num1: z.number().describe('첫 번째 숫자'),
+            num2: z.number().describe('두 번째 숫자'),
+            operator: z
+                .enum(['+', '-', '*', '/'])
+                .describe('연산자 (+, -, *, /)')
+        }),
+        outputSchema: z.object({
+            content: z
+                .array(
+                    z.object({
+                        type: z.literal('text'),
+                        text: z.string().describe('계산 결과')
+                    })
+                )
+                .describe('계산 결과')
+        })
+    },
+    async ({ num1, num2, operator }) => {
+        let result: number
+        let resultText: string
+
+        switch (operator) {
+            case '+':
+                result = num1 + num2
+                resultText = `${num1} + ${num2} = ${result}`
+                break
+            case '-':
+                result = num1 - num2
+                resultText = `${num1} - ${num2} = ${result}`
+                break
+            case '*':
+                result = num1 * num2
+                resultText = `${num1} * ${num2} = ${result}`
+                break
+            case '/':
+                if (num2 === 0) {
+                    resultText = '오류: 0으로 나눌 수 없습니다.'
+                } else {
+                    result = num1 / num2
+                    resultText = `${num1} / ${num2} = ${result}`
+                }
+                break
+        }
+
+        return {
+            content: [
+                {
+                    type: 'text' as const,
+                    text: resultText
+                }
+            ],
+            structuredContent: {
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: resultText
+                    }
+                ]
+            }
+        }
+    }
+)
+
+server.registerTool(
+    'get-time',
+    {
+        description: '타임존을 입력받아 해당 타임존의 현재 시간을 반환합니다.',
+        inputSchema: z.object({
+            timezone: z
+                .string()
+                .describe('IANA 타임존 이름 (예: Asia/Seoul, America/New_York, Europe/London)')
+        }),
+        outputSchema: z.object({
+            content: z
+                .array(
+                    z.object({
+                        type: z.literal('text'),
+                        text: z.string().describe('타임존별 현재 시간')
+                    })
+                )
+                .describe('타임존별 현재 시간')
+        })
+    },
+    async ({ timezone }) => {
+        try {
+            const now = new Date()
+            const formatter = new Intl.DateTimeFormat('ko-KR', {
+                timeZone: timezone,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            })
+
+            const formattedTime = formatter.format(now)
+            const resultText = `${timezone}의 현재 시간: ${formattedTime}`
+
+            return {
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: resultText
+                    }
+                ],
+                structuredContent: {
+                    content: [
+                        {
+                            type: 'text' as const,
+                            text: resultText
+                        }
+                    ]
+                }
+            }
+        } catch (error) {
+            const errorMessage = `오류: 유효하지 않은 타임존입니다. (${timezone})`
+            return {
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: errorMessage
+                    }
+                ],
+                structuredContent: {
+                    content: [
+                        {
+                            type: 'text' as const,
+                            text: errorMessage
+                        }
+                    ]
+                }
+            }
+        }
+    }
+)
+
+server.registerTool(
+    'geocode',
+    {
+        description: '도시 이름이나 주소를 입력받아 위도와 경도 좌표를 반환합니다.',
+        inputSchema: z.object({
+            address: z
+                .string()
+                .describe('도시 이름 또는 주소 (예: "Seoul", "New York", "서울시 강남구", "135 Pilkington Avenue, Birmingham")')
+        }),
+        outputSchema: z.object({
+            content: z
+                .array(
+                    z.object({
+                        type: z.literal('text'),
+                        text: z.string().describe('위도와 경도 좌표')
+                    })
+                )
+                .describe('위도와 경도 좌표')
+        })
+    },
+    async ({ address }) => {
+        try {
+            const encodedAddress = encodeURIComponent(address)
+            const url = `https://nominatim.openstreetmap.org/search?q=${encodedAddress}&format=jsonv2&limit=1&addressdetails=1`
+
+            const response = await fetch(url, {
+                headers: {
+                    'User-Agent': 'MCP-Geocode-Tool/1.0'
+                }
+            })
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`)
+            }
+
+            const data = await response.json()
+
+            if (!Array.isArray(data) || data.length === 0) {
+                const errorMessage = `주소를 찾을 수 없습니다: ${address}`
+                return {
+                    content: [
+                        {
+                            type: 'text' as const,
+                            text: errorMessage
+                        }
+                    ],
+                    structuredContent: {
+                        content: [
+                            {
+                                type: 'text' as const,
+                                text: errorMessage
+                            }
+                        ]
+                    }
+                }
+            }
+
+            const result = data[0]
+            const lat = parseFloat(result.lat)
+            const lon = parseFloat(result.lon)
+            const displayName = result.display_name || address
+
+            const resultText = `주소: ${displayName}\n위도: ${lat}\n경도: ${lon}\n좌표: (${lat}, ${lon})`
+
+            return {
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: resultText
+                    }
+                ],
+                structuredContent: {
+                    content: [
+                        {
+                            type: 'text' as const,
+                            text: resultText
+                        }
+                    ]
+                }
+            }
+        } catch (error) {
+            const errorMessage = `오류: 주소를 조회하는 중 문제가 발생했습니다. ${error instanceof Error ? error.message : String(error)}`
+            return {
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: errorMessage
+                    }
+                ],
+                structuredContent: {
+                    content: [
+                        {
+                            type: 'text' as const,
+                            text: errorMessage
+                        }
+                    ]
+                }
+            }
+        }
+    }
+)
+
+server.registerTool(
+    'get-weather',
+    {
+        description: '위도와 경도 좌표, 예보 기간을 입력받아 해당 위치의 현재 날씨와 예보 정보를 제공합니다.',
+        inputSchema: z.object({
+            latitude: z
+                .number()
+                .min(-90)
+                .max(90)
+                .describe('위도 좌표 (-90 ~ 90)'),
+            longitude: z
+                .number()
+                .min(-180)
+                .max(180)
+                .describe('경도 좌표 (-180 ~ 180)'),
+            forecastDays: z
+                .number()
+                .int()
+                .min(1)
+                .max(16)
+                .optional()
+                .default(7)
+                .describe('예보 기간 (일 단위, 1~16일, 기본값: 7일)')
+        }),
+        outputSchema: z.object({
+            content: z
+                .array(
+                    z.object({
+                        type: z.literal('text'),
+                        text: z.string().describe('날씨 정보')
+                    })
+                )
+                .describe('날씨 정보')
+        })
+    },
+    async ({ latitude, longitude, forecastDays = 7 }) => {
+        try {
+            const url = new URL('https://api.open-meteo.com/v1/forecast')
+            url.searchParams.set('latitude', latitude.toString())
+            url.searchParams.set('longitude', longitude.toString())
+            url.searchParams.set('current_weather', 'true')
+            url.searchParams.set('hourly', 'temperature_2m,precipitation,wind_speed_10m,weather_code')
+            url.searchParams.set('daily', 'temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code')
+            url.searchParams.set('forecast_days', forecastDays.toString())
+            url.searchParams.set('timezone', 'auto')
+
+            const response = await fetch(url.toString())
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`)
+            }
+
+            const data = await response.json()
+
+            // 현재 날씨 정보
+            const current = data.current_weather
+            const currentTemp = current.temperature
+            const currentWindSpeed = current.windspeed
+            const currentWeatherCode = current.weathercode
+
+            // 일별 예보 정보
+            const daily = data.daily
+            const dailyTimes = daily.time
+            const dailyMaxTemps = daily.temperature_2m_max
+            const dailyMinTemps = daily.temperature_2m_min
+            const dailyPrecip = daily.precipitation_sum
+            const dailyWeatherCodes = daily.weather_code
+
+            // 날씨 코드를 설명으로 변환하는 함수
+            const getWeatherDescription = (code: number): string => {
+                const weatherCodes: Record<number, string> = {
+                    0: '맑음',
+                    1: '대체로 맑음',
+                    2: '부분적으로 흐림',
+                    3: '흐림',
+                    45: '안개',
+                    48: '서리 안개',
+                    51: '약한 이슬비',
+                    53: '중간 이슬비',
+                    55: '강한 이슬비',
+                    56: '약한 동결 이슬비',
+                    57: '강한 동결 이슬비',
+                    61: '약한 비',
+                    63: '중간 비',
+                    65: '강한 비',
+                    66: '약한 동결 비',
+                    67: '강한 동결 비',
+                    71: '약한 눈',
+                    73: '중간 눈',
+                    75: '강한 눈',
+                    77: '눈알',
+                    80: '약한 소나기',
+                    81: '중간 소나기',
+                    82: '강한 소나기',
+                    85: '약한 눈 소나기',
+                    86: '강한 눈 소나기',
+                    95: '천둥번개',
+                    96: '천둥번개와 약한 우박',
+                    99: '천둥번개와 강한 우박'
+                }
+                return weatherCodes[code] || `코드 ${code}`
+            }
+
+            // 결과 텍스트 생성
+            let resultText = `📍 위치: 위도 ${latitude}, 경도 ${longitude}\n\n`
+            resultText += `🌡️ 현재 날씨:\n`
+            resultText += `  온도: ${currentTemp}°C\n`
+            resultText += `  날씨: ${getWeatherDescription(currentWeatherCode)}\n`
+            resultText += `  풍속: ${currentWindSpeed} km/h\n\n`
+
+            resultText += `📅 ${forecastDays}일 예보:\n`
+            for (let i = 0; i < Math.min(forecastDays, dailyTimes.length); i++) {
+                const date = new Date(dailyTimes[i])
+                const dateStr = date.toLocaleDateString('ko-KR', {
+                    month: 'short',
+                    day: 'numeric',
+                    weekday: 'short'
+                })
+                resultText += `\n${dateStr}:\n`
+                resultText += `  최고: ${dailyMaxTemps[i]}°C / 최저: ${dailyMinTemps[i]}°C\n`
+                resultText += `  강수량: ${dailyPrecip[i]}mm\n`
+                resultText += `  날씨: ${getWeatherDescription(dailyWeatherCodes[i])}\n`
+            }
+
+            return {
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: resultText
+                    }
+                ],
+                structuredContent: {
+                    content: [
+                        {
+                            type: 'text' as const,
+                            text: resultText
+                        }
+                    ]
+                }
+            }
+        } catch (error) {
+            const errorMessage = `오류: 날씨 정보를 조회하는 중 문제가 발생했습니다. ${error instanceof Error ? error.message : String(error)}`
+            return {
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: errorMessage
+                    }
+                ],
+                structuredContent: {
+                    content: [
+                        {
+                            type: 'text' as const,
+                            text: errorMessage
+                        }
+                    ]
+                }
+            }
+        }
+    }
+)
+
+server.registerTool(
+    'generate-image',
+    {
+        description: '텍스트 프롬프트를 입력받아 AI 이미지를 생성합니다. (FLUX.1-schnell 모델 사용)',
+        inputSchema: z.object({
+            prompt: z
+                .string()
+                .describe('생성할 이미지에 대한 설명 (예: "Astronaut riding a horse", "A beautiful sunset over mountains")')
+        })
+    },
+    async ({ prompt }) => {
+        try {
+            const image = (await hfClient.textToImage({
+                provider: 'auto',
+                model: 'black-forest-labs/FLUX.1-schnell',
+                inputs: prompt,
+                parameters: { num_inference_steps: 5 }
+            })) as unknown as Blob
+
+            // Blob을 Base64로 변환
+            const arrayBuffer = await image.arrayBuffer()
+            const base64Data = Buffer.from(arrayBuffer).toString('base64')
+
+            return {
+                content: [
+                    {
+                        type: 'image' as const,
+                        data: base64Data,
+                        mimeType: 'image/png',
+                        annotations: {
+                            audience: ['user'],
+                            priority: 0.9
+                        }
+                    }
+                ]
+            }
+        } catch (error) {
+            const errorMessage = `오류: 이미지 생성 중 문제가 발생했습니다. ${error instanceof Error ? error.message : String(error)}`
+            return {
+                content: [
+                    {
+                        type: 'text' as const,
+                        text: errorMessage
+                    }
+                ]
+            }
+        }
+    }
+)
+
+// 코드 리뷰 프롬프트 등록
+server.registerPrompt(
+    'code-review',
+    {
+        title: '코드 리뷰',
+        description: '코드를 입력받아 종합적인 코드 리뷰를 위한 프롬프트를 생성합니다.',
+        argsSchema: {
+            code: z.string().describe('리뷰할 코드'),
+            language: z
+                .string()
+                .optional()
+                .describe('프로그래밍 언어 (예: javascript, python, typescript)'),
+            focus: z
+                .string()
+                .optional()
+                .describe('집중할 영역 (예: 성능, 보안, 가독성)')
+        }
+    },
+    ({ code, language, focus }) => {
+        const lang = language || '코드'
+        const focusArea = focus ? `\n\n특히 다음 영역에 집중해서 리뷰해주세요: ${focus}` : ''
+
+        const promptTemplate = `다음 ${lang} 코드를 리뷰해주세요:
+
+\`\`\`${language || ''}
+${code}
+\`\`\`
+${focusArea}
+
+다음 항목들을 포함하여 종합적인 코드 리뷰를 제공해주세요:
+
+1. **코드 품질 평가**
+   - 코드의 전반적인 품질과 구조
+   - 명명 규칙 및 코딩 컨벤션 준수 여부
+
+2. **잠재적 버그 및 오류**
+   - 논리적 오류나 엣지 케이스
+   - 타입 관련 문제
+
+3. **성능 고려사항**
+   - 시간/공간 복잡도
+   - 최적화 가능한 부분
+
+4. **보안 취약점**
+   - 입력 검증
+   - 민감한 데이터 처리
+
+5. **개선 제안**
+   - 리팩토링 제안
+   - 더 나은 패턴이나 라이브러리 활용
+
+6. **베스트 프랙티스**
+   - 해당 언어/프레임워크의 권장 사항
+   - 테스트 가능성`
+
+        return {
+            messages: [
+                {
+                    role: 'user' as const,
+                    content: {
+                        type: 'text' as const,
+                        text: promptTemplate
+                    }
+                }
+            ]
+        }
+    }
+)
+
+// 서버 정보 및 도구 목록 리소스 등록
+server.registerResource(
+    'server-info',
+    'server://info',
+    {
+        title: '서버 정보',
+        description: '현재 서버 정보와 사용 가능한 도구 목록을 반환합니다.',
+        mimeType: 'application/json'
+    },
+    async () => {
+        const serverInfo = {
+            server: {
+                name: SERVER_NAME,
+                version: SERVER_VERSION,
+                timestamp: new Date().toISOString(),
+                uptime: process.uptime()
+            },
+            tools: [
+                {
+                    name: 'greet',
+                    description: '이름과 언어를 입력하면 인사말을 반환합니다.',
+                    parameters: {
+                        name: '인사할 사람의 이름 (문자열)',
+                        language: '인사 언어 (ko 또는 en, 기본값: en)'
+                    }
+                },
+                {
+                    name: 'calculator',
+                    description: '두 개의 숫자와 연산자를 입력받아 사칙연산 결과를 반환합니다.',
+                    parameters: {
+                        num1: '첫 번째 숫자',
+                        num2: '두 번째 숫자',
+                        operator: '연산자 (+, -, *, /)'
+                    }
+                },
+                {
+                    name: 'get-time',
+                    description: '타임존을 입력받아 해당 타임존의 현재 시간을 반환합니다.',
+                    parameters: {
+                        timezone: 'IANA 타임존 이름 (예: Asia/Seoul, America/New_York, Europe/London)'
+                    }
+                },
+                {
+                    name: 'geocode',
+                    description: '도시 이름이나 주소를 입력받아 위도와 경도 좌표를 반환합니다.',
+                    parameters: {
+                        address: '도시 이름 또는 주소'
+                    }
+                },
+                {
+                    name: 'get-weather',
+                    description: '위도와 경도 좌표, 예보 기간을 입력받아 해당 위치의 현재 날씨와 예보 정보를 제공합니다.',
+                    parameters: {
+                        latitude: '위도 좌표 (-90 ~ 90)',
+                        longitude: '경도 좌표 (-180 ~ 180)',
+                        forecastDays: '예보 기간 (일 단위, 1~16일, 기본값: 7일)'
+                    }
+                },
+                {
+                    name: 'generate-image',
+                    description: '텍스트 프롬프트를 입력받아 AI 이미지를 생성합니다. (FLUX.1-schnell 모델 사용)',
+                    parameters: {
+                        prompt: '생성할 이미지에 대한 설명'
+                    }
+                }
+            ],
+            totalTools: 6
+        }
+
+        return {
+            contents: [
+                {
+                    uri: 'server://info',
+                    mimeType: 'application/json',
+                    text: JSON.stringify(serverInfo, null, 2)
+                }
+            ]
+        }
+    }
+)
+
+server
+    .connect(new StdioServerTransport())
+    .catch(console.error)
+    .then(() => {
+        console.log('MCP server started')
+    })
