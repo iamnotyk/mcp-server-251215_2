@@ -1,0 +1,8 @@
+# Smithery configuration for MCP server deployment
+runtime: "typescript"
+
+# For local server deployment (runs on user's machine):
+# target: "local"
+
+# For remote deployment (Smithery manages infrastructure):
+# (default - no target needed)
