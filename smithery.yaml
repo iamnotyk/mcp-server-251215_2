@@ -6,3 +6,4 @@ runtime: "typescript"
 
 # For remote deployment (Smithery manages infrastructure):
 # (default - no target needed)
+
